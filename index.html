@@ -3,36 +3,72 @@ html
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Driver Fatigue Detector</title>
+  <title>Fatigue Detector</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
   <style>
-    body { font-family: sans-serif; text-align: center; padding: 20px; }
-    video { width: 100%; max-width: 500px; border: 2px solid #333; border-radius: 10px; }
-    button { margin-top: 20px; padding: 10px 20px; font-size: 16px; }
+    body { text-align: center; font-family: sans-serif; }
+    video { border: 2px solid #333; border-radius: 10px; margin-top: 20px; width: 90%; max-width: 480px; }
+    canvas { position: absolute; }
+    button { margin-top: 15px; padding: 10px 20px; font-size: 16px; }
   </style>
 </head>
 <body>
   <h1>Driver Fatigue Detector</h1>
   <video id="video" autoplay muted></video>
-  <br />
-  <button onclick="toggleCamera()">Старт / Стоп</button>
-
+  <audio id="alarmSound" src="https://www.soundjay.com/buttons/sounds/beep-07.mp3" preload="auto"></audio>
   <script>
-    let stream = null;
-    async function toggleCamera() {
-      const video = document.getElementById('video');
-      if (!stream) {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          video.srcObject = stream;
-        } catch (err) {
-          alert("Не удалось включить камеру: " + err);
-        }
-      } else {
-        stream.getTracks().forEach(track => track.stop());
-        video.srcObject = null;
-        stream = null;
-      }
+    const video = document.getElementById('video');
+    const alarm = document.getElementById('alarmSound');
+    let isAlarmOn = false;
+    let eyeClosedFrames = 0;
+
+    Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models'),
+      faceapi.nets.faceLandmark68TinyNet.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models')
+
+]).then(startVideo);
+
+    function startVideo() {
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => { video.srcObject = stream; })
+        .catch(err => alert("Камера недоступна: " + err));
     }
+
+    function getEAR(eye) {
+      const a = Math.hypot(eye[1].x - eye[5].x, eye[1].y - eye[5].y);
+      const b = Math.hypot(eye[2].x - eye[4].x, eye[2].y - eye[4].y);
+      const c = Math.hypot(eye[0].x - eye[3].x, eye[0].y - eye[3].y);
+      return (a + b) / (2.0 * c);
+    }
+
+    video.addEventListener('play', () => {
+      const interval = setInterval(async () => {
+        const detections = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks(true);
+
+        if (detections) {
+          const landmarks = detections.landmarks;
+          const leftEye = landmarks.getLeftEye();
+          const rightEye = landmarks.getRightEye();
+          const leftEAR = getEAR(leftEye);
+          const rightEAR = getEAR(rightEye);
+          const ear = (leftEAR + rightEAR) / 2;
+
+          if (ear < 0.25) {
+            eyeClosedFrames++;
+            if (eyeClosedFrames >= 30 && !isAlarmOn) {
+              isAlarmOn = true;
+              alarm.play();
+            }
+          } else {
+            eyeClosedFrames = 0;
+
+isAlarmOn = false;
+            alarm.pause();
+            alarm.currentTime = 0;
+          }
+        }
+      }, 100);
+    });
   </script>
 </body>
 </html>
